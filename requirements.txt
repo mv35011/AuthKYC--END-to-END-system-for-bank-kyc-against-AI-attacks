@@ -2,3 +2,7 @@ torch
 torchvision
 opencv-python
 facenet-pytorch
+fastapi
+pydantic
+scipy
+mediapipe
