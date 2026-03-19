@@ -1,72 +1,286 @@
-Markdown
-# Defensive KYC: Robust Detection of Synthetic Camera Streams and Replay Attacks
+# Defensive KYC: Biologically-Anchored Detection of Synthetic Camera Streams and Replay Attacks
+
+> **NIT Patna — Department of Electronics and Communication Engineering**
+> Manmohan Vishwakarma · Ankur Raj
+
+---
 
 ## Abstract
-[cite_start]Remote Know Your Customer (KYC) verification has become a standard process for onboarding users in banking, fintech, and digital services[cite: 5]. [cite_start]However, the increasing accessibility of deepfake generation tools, virtual camera software, and replay attacks has made traditional video-based verification vulnerable to sophisticated fraud[cite: 6]. 
 
-[cite_start]This project is an end-to-end system capable of detecting synthetic or injected video streams in real-time remote KYC environments[cite: 8]. [cite_start]The objective is to design a deployable architecture capable of identifying fraudulent video feeds while maintaining low-latency performance suitable for real-world verification systems[cite: 10].
+Remote Know Your Customer (KYC) verification is now the standard onboarding layer for banking, fintech, and digital identity services. Yet traditional video-based verification is fundamentally broken against modern threats: real-time deepfake pipelines, virtual-camera injection (OBS, ManyCam), and screen-replay attacks can impersonate a legitimate user without triggering any existing liveness check.
 
-## Core Modules
+This project builds an **end-to-end, biologically-grounded fraud detection system** that operates on live video streams. The core insight is that deepfake generators optimise against human visual perception — they have no incentive to synthesise a coherent cardiovascular pulse, a consistent sensor-noise fingerprint, or plausible GAN-free frequency spectra. We exploit all three of these blind spots simultaneously.
 
+---
 
+## The Four-Layer Attack Threat Model
 
-[cite_start]The system consists of multiple modules designed to analyze different aspects of video authenticity[cite: 29]:
+| Attack Type | Vector | Why Naive Detectors Fail |
+|---|---|---|
+| **Screen Replay** | Prerecorded video played to a physical camera | Moire/flicker-only detectors miss digital injection |
+| **Virtual Camera Injection** | OBS / ManyCam injects directly into OS camera driver | No screen artefacts; bypasses replay detectors entirely |
+| **Real-time Deepfake** | Live GPU face-swap (DeepFaceLive, Roop) | Single-frame detectors miss temporal inconsistencies |
+| **Fully Synthetic AI Video** | Diffusion/GAN talking-head generation | Requires frequency-domain + biological signal analysis |
 
-* **1. [cite_start]Video Stream Integrity Module:** Verifies whether the video frames originate from a physical camera sensor[cite: 31]. [cite_start]It explores techniques such as sensor noise pattern analysis and compression artifact consistency[cite: 32].
-* **2. [cite_start]Replay Attack Detection Module:** Detects video replay attacks by identifying visual artifacts commonly produced when recording screens, such as moiré patterns, refresh-rate flicker, and brightness inconsistencies[cite: 34].
-* **3. [cite_start]Temporal Deepfake Detection:** A sequence-based deep learning model analyzes frame sequences to detect temporal inconsistencies introduced by deepfake generation pipelines[cite: 36]. [cite_start]Architecture includes 3D Convolutional Neural Networks and Video Vision Transformers[cite: 38, 39].
-* **4. [cite_start]Real-Time Inference Pipeline:** All detection modules are integrated into a real-time inference pipeline capable of processing live video streams[cite: 42]. [cite_start]The system generates a fraud risk score based on the outputs of each module[cite: 43].
+---
+
+## Novel Contributions
+
+This system introduces three novel technical contributions beyond the baseline replay and deepfake detection modules:
+
+### 1. rPPG Physiological Liveness Gate *(Patent Anchor)*
+
+Remote photoplethysmography (rPPG) recovers the sub-visible colour fluctuations in facial skin caused by the cardiac cycle. A genuine live human produces a coherent blood-volume pulse (BVP) in the 0.7–4.0 Hz band. Deepfake generators produce no such signal.
+
+**Mechanism:**
+- Extract facial ROI via MediaPipe Face Mesh across the full verification window (~10 s)
+- Apply CHROM chrominance projection to recover the raw pulse signal `p(t)`
+- Bandpass filter to `[0.7, 4.0] Hz` (42–240 bpm physiological range)
+- Compute pulse SNR in the frequency domain via DFT
+
+**Gate logic:** If `SNR_pulse < threshold`, the session is **hard-rejected** before any deep-learning module runs. This is a fast, CPU-only pre-filter that no current synthetic video generator can defeat without explicit physiological modelling.
+
+**Why it is patentable:** Fusing rPPG as a *liveness gate* — rather than a heart-rate estimator — within a KYC fraud pipeline is an unexplored and defensible claim. No commercial KYC product currently deploys this mechanism.
+
+---
+
+### 2. Frequency-Temporal Cross-Attention (FTCA) Block *(Publication Anchor)*
+
+GAN and diffusion model artefacts manifest as anomalous high-frequency components in the Fourier domain. The *temporal evolution* of these frequency artefacts is a stronger discriminator than any single-frame FFT.
+
+**Architecture:**
+
+```
+Input Clip (T × H × W × 3)
+       │
+       ├─────────────────────────────────────────┐
+       │                                         │
+ [RGB Branch]                            [Frequency Branch]
+ 3D-CNN Backbone                     Per-frame 2D DFT → log|F|
+ (ResNet3D-18)                       → Frequency CNN Encoder
+       │                                         │
+ F_rgb ∈ R^(T' × d)                   F_freq ∈ R^(T' × d)
+       │                                         │
+       └──────────── Cross-Attention ────────────┘
+                Q = F_rgb · W_Q
+                K = F_freq · W_K
+                V = F_freq · W_V
+                F_fused = softmax(QK^T / √d) · V
+                          │
+                    Classification Head
+                    (Real / Fake score)
+```
+
+**Key property:** The cross-attention forces the model to learn *which frequency artefacts correlate with which spatial-temporal patterns* — a training signal unavailable to either branch in isolation.
+
+**Training loss:**
+
+```
+L = L_BCE(y, ŷ) + λ₁ · L_freq(F_freq, F_freq_real) + λ₂ · L_temporal(F_fused, Δt)
+```
+
+where `L_freq` is a contrastive loss on frequency embeddings and `L_temporal` penalises inconsistent frequency trajectories over time.
+
+---
+
+### 3. PRNU Sensor-Noise Stream Forensics *(Deployment Anchor)*
+
+Every physical camera sensor has a unique Photo-Response Non-Uniformity (PRNU) fingerprint arising from manufacturing imperfections. Virtual-camera software renders frames entirely in software — they carry **no PRNU signature**.
+
+**Mechanism:**
+- Estimate residual noise field by subtracting a BM3D/DnCNN-denoised version of each frame
+- Correlate estimated fingerprint against a pre-enrolled reference or use absence-of-fingerprint as the anomaly signal
+- Streams from OBS/ManyCam produce near-zero correlation → flagged as virtual injection
+
+---
+
+## Unified System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        LIVE VIDEO STREAM                            │
+└─────────────────────────────┬───────────────────────────────────────┘
+                              │
+                    ┌─────────▼──────────┐
+                    │   Pre-processing   │
+                    │  Face Det. (MTCNN) │
+                    │  ROI Extraction    │
+                    └──┬──┬──┬──┬───────┘
+                       │  │  │  │
+          ┌────────────┘  │  │  └────────────┐
+          │               │  │               │
+  ┌───────▼──────┐ ┌──────▼──▼──────┐ ┌─────▼────────┐
+  │   MODULE 1   │ │   MODULE 2     │ │  MODULE 3    │
+  │ rPPG         │ │ FTCA Deepfake  │ │ PRNU Sensor  │
+  │ Liveness     │ │ Detector       │ │ Forensics    │
+  │ Gate         │ │ (Novel Arch.)  │ │              │
+  └───────┬──────┘ └──────┬─────────┘ └─────┬────────┘
+          │               │                 │
+          │         ┌─────▼──────┐          │
+          │         │  MODULE 4  │          │
+          │         │  Replay    │          │
+          │         │  Attack    │          │
+          │         │  Detector  │          │
+          │         └─────┬──────┘          │
+          │               │                 │
+          └───────┬────────┴─────────────────┘
+                  │
+         ┌────────▼────────┐
+         │  Weighted Score │
+         │  Fusion Layer   │
+         │  (learned w_i)  │
+         └────────┬────────┘
+                  │
+         ┌────────▼────────┐
+         │  Fraud Risk     │    r < 0.3  → PASS
+         │  Score r∈[0,1]  │    0.3–0.7 → CHALLENGE
+         └─────────────────┘    r ≥ 0.7  → REJECT + LOG
+```
+
+**Hard override:** If the rPPG gate fires with confidence > 0.95, the session is hard-rejected immediately, bypassing all downstream modules.
+
+---
 
 ## Technology Stack
-* [cite_start]**Core Development:** Python [cite: 53]
-* **Deep Learning Engine:** PyTorch [cite: 54] (Optimized for CUDA/A6000 training)
-* [cite_start]**Computer Vision & Processing:** OpenCV[cite: 55], `facenet-pytorch` (MTCNN)
-* **Data Augmentation:** `Albumentations` (Heavy compression, color jitter, blur injection)
-* [cite_start]**Inference Service:** FastAPI [cite: 56]
-* **Deployment:** Docker [cite: 57]
 
-## Hardware & Environment Setup
+| Layer | Tool |
+|---|---|
+| Language | Python 3.11 |
+| Deep Learning | PyTorch 2.x |
+| Video / Image | OpenCV 4.x, ffmpeg-python |
+| Face Detection | MediaPipe Face Mesh, MTCNN (`facenet-pytorch`) |
+| rPPG | Custom CHROM/POS + TS-CAN (PyTorch) |
+| Frequency Analysis | NumPy FFT, SciPy signal |
+| 3D-CNN Backbone | torchvision ResNet3D-18 (Kinetics pretrained) |
+| PRNU Denoising | BM3D / DnCNN |
+| Data Augmentation | Albumentations (H.264/JPEG compression, blur, colour jitter) |
+| Inference Service | FastAPI + Uvicorn (WebSocket endpoint) |
+| Experiment Tracking | Weights & Biases (wandb) |
+| Deployment | Docker, ONNX Runtime |
 
-The workflow is split between local prototyping and heavy GPU training.
+---
 
-**1. Local Prototyping (Apple Silicon / M2)**
-Used for testing data extraction scripts, FastAPI endpoint validation, and CPU/MPS model debugging.
+## Hardware Setup
+
+### Local Prototyping (Apple Silicon / M2)
+Used for data extraction scripts, FastAPI endpoint validation, and CPU/MPS debugging.
+
 ```bash
-# Install dependencies
 pip install torch torchvision torchaudio
-pip install opencv-python facenet-pytorch albumentations fastapi uvicorn
-2. Heavy Training (RTX A6000 VM)
-Used for training the 3D CNN / Video ViT temporal models on large-scale datasets (e.g., ILLUSION, Celeb-DF++).
+pip install opencv-python facenet-pytorch albumentations fastapi uvicorn mediapipe scipy bm3d
+```
 
-Bash
-# Ensure CUDA-compiled PyTorch is installed
-pip install torch torchvision torchaudio --index-url [https://download.pytorch.org/whl/cu118](https://download.pytorch.org/whl/cu118)
-Data Pipeline & Preprocessing
-To ensure the model does not overfit to compression artifacts, dataset biases, or specific camera hardware, the data pipeline strictly enforces:
+### Heavy Training (RTX A6000 VM)
+Used for training FTCA and TS-CAN models on large-scale datasets.
 
-Batched MTCNN Extraction: Isolates and extracts only the facial bounding boxes across sequences of 16 frames.
+```bash
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+pip install opencv-python facenet-pytorch albumentations fastapi uvicorn mediapipe scipy wandb
+```
 
-Aggressive Augmentation: Applies on-the-fly H.264/JPEG compression degradation, extreme color shifts, and Gaussian blur via Albumentations to force the network to learn behavioral and temporal artifacts.
+---
 
-Evaluation Metrics
-The system is benchmarked on:
+## Datasets
 
-Detection accuracy for deepfake and replay attacks 
+| Dataset | Use | Attack Type |
+|---|---|---|
+| FaceForensics++ (c23 / c40) | FTCA training + eval | Deepfake |
+| Celeb-DF v2 | FTCA generalisation eval | Deepfake |
+| DFDC Preview | FTCA training | Deepfake |
+| Replay-Attack (IDIAP) | Replay module training | Screen replay |
+| MSU-MFSD | Replay module training | Screen replay |
+| UBFC-rPPG | rPPG module training | Liveness ground truth |
+| COHFACE | rPPG module training | Liveness ground truth |
+| Custom OBS captures | Virtual injection training | Virtual camera injection |
 
-False positive rate for legitimate users 
+The custom OBS dataset is generated in-house: deepfake sequences are injected through OBS virtual camera into a capture pipeline, producing samples that no existing public dataset covers.
 
-Inference latency for real-time deployment 
+---
 
-Authors
+## Data Pipeline
 
-Manmohan Vishwakarma - Department of Electronics and Communication Engineering, National Institute of Technology Patna 
+To ensure models learn behavioural and temporal artefacts rather than compression or hardware biases:
 
+- **Batched MTCNN extraction** — isolates facial bounding boxes across 16-frame windows
+- **Temporal windowing** — `T = 16` frames, stride `= 8`, aligned across all four modules
+- **Aggressive augmentation via Albumentations:**
+  - On-the-fly H.264 / JPEG compression degradation
+  - Extreme colour jitter and Gaussian blur injection
+  - Random horizontal flip, crop jitter
+  - Simulated screen-capture noise (Moire injection for replay augmentation)
 
-Ankur Raj - Department of Electronics and Communication Engineering, National Institute of Technology Patna 
+---
 
+## Evaluation Metrics
 
-***
+| Metric | Target |
+|---|---|
+| AUC-ROC | > 0.97 on FF++ c23 |
+| Equal Error Rate (EER) | < 3% across all attack types |
+| False Acceptance Rate (FAR) | < 1% (banking deployment requirement) |
+| False Rejection Rate (FRR) | < 5% (user experience requirement) |
+| End-to-end latency | < 150 ms per 16-frame window (mixed CPU+GPU) |
 
-This gives your project a massive amount of credibility right out of the gate. Anyone looking at this repository will immediately see that you aren't just training a toy model; you are engineering a hardened, deployment-ready security product. 
+### Ablation Study Design
 
-Would you like me to write out the `Albumentations` data augmentation pipeline next so we can finalize the PyTorch `Dataset` class and start feeding data to the A6000?
+| Variant | Modules Active |
+|---|---|
+| Baseline | Replay detector only |
+| +rPPG | Baseline + liveness gate |
+| +FTCA | Baseline + frequency-temporal detector |
+| +PRNU | Baseline + sensor forensics |
+| **Full system** | **All modules + fusion** |
+
+Each ablation is evaluated against all four attack types independently.
+
+---
+
+## Implementation Phases
+
+| Phase | Weeks | Deliverable |
+|---|---|---|
+| Literature review + environment setup | 1–2 | Shared repo, dependency lock, reading list |
+| Dataset collection + augmentation pipeline | 3–4 | Unified DataLoader, augmentation config |
+| rPPG module (CHROM + TS-CAN + gate) | 5–6 | rPPG liveness gate with SNR threshold tuning |
+| FTCA module (architecture + training) | 7–8 | Trained FTCA block with ablation baseline |
+| PRNU + Replay modules | 9 | Both detectors integrated and unit-tested |
+| Fusion layer + FastAPI pipeline | 10–11 | End-to-end inference service, Docker image |
+| Evaluation, ablation, benchmarking | 12–14 | Final metrics, paper draft, patent claims draft |
+
+---
+
+## Patent and Publication Targets
+
+**Independent Claim 1 — Biological Liveness Gate:**
+A method for authenticating a live video stream by extracting an rPPG signal from a facial ROI, computing pulse SNR within the physiological frequency band, and hard-rejecting streams below a threshold — operating without any additional hardware sensor.
+
+**Independent Claim 2 — FTCA Architecture:**
+A neural network for synthetic video detection comprising a 3D-CNN RGB branch, a per-frame DFT frequency encoding branch, and a cross-attention module in which the RGB branch queries the frequency branch to capture correlations between spatial artefacts and their temporal frequency evolution.
+
+**Target venues:** IEEE/CVF CVPR or ECCV Workshop on Media Forensics · IEEE T-IFS · ACM MM
+
+---
+
+## Repository Structure *(planned)*
+
+```
+kyc-defensive/
+├── data/
+│   ├── loaders/          # PyTorch Dataset classes (temporal windowing)
+│   └── augmentation/     # Albumentations pipelines
+├── modules/
+│   ├── rppg/             # CHROM extractor, TS-CAN, SNR gate
+│   ├── ftca/             # 3D-CNN backbone, frequency encoder, cross-attention
+│   ├── prnu/             # BM3D denoiser, fingerprint correlator
+│   └── replay/           # Moire/flicker detector
+├── fusion/               # Weighted score fusion layer
+├── api/                  # FastAPI + WebSocket inference service
+├── train/                # Training scripts per module + joint fine-tuning
+├── eval/                 # Benchmarking and ablation scripts
+├── docker/               # Dockerfile + compose config
+└── notebooks/            # Exploratory analysis and visualisation
+```
+
+---
+
+*Internal working document — NIT Patna Minor Project · ECE Department*
