@@ -5,29 +5,21 @@ import shutil
 import os
 import uuid
 import time
+import cv2
 
-# Import the modular orchestrator we built
 from core_engine import KYCOrchestrator
 
-app = FastAPI(title="Defensive KYC Security Gateway", version="1.0")
+app = FastAPI(title="Defensive KYC PAD Gateway", version="2.0")
 
-# Enable CORS for local frontend development
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    CORSMiddleware, allow_origins=["*"], allow_credentials=True,
+    allow_methods=["*"], allow_headers=["*"],
 )
 
-print("[System] Initializing Modular KYC Engine...")
 engine = KYCOrchestrator()
-print("[System] All security layers operational.")
-
 os.makedirs("temp_uploads", exist_ok=True)
 
 
-# Define the exact JSON structure the frontend will receive
 class StageResult(BaseModel):
     score: float
     passed: bool
@@ -36,78 +28,90 @@ class StageResult(BaseModel):
 
 class KYCResponse(BaseModel):
     processing_time_seconds: float
-    stage_1_sensor: StageResult
-    stage_2_biological: StageResult
-    stage_3_temporal_ai: StageResult
+    telemetry_status: str
+    stage_1_sensor_prnu: StageResult
+    stage_2_presentation_replay: StageResult
+    stage_3_biological_rppg: StageResult
+    stage_4_synthetic_ftca: StageResult
     final_decision: str
+
+
+def analyze_stream_telemetry(video_path):
+    """Checks for OBS/Virtual Camera frame dropping and unnatural metadata."""
+    cap = cv2.VideoCapture(video_path)
+    expected_fps = cap.get(cv2.CAP_PROP_FPS)
+    frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+    duration = frame_count / expected_fps if expected_fps > 0 else 0
+    cap.release()
+
+    # Virtual cameras often write files with slightly corrupted headers
+    # or perfectly rigid, unnatural integer frame rates.
+    if expected_fps == 0 or duration == 0:
+        return "WARNING: Corrupted Video Metadata (Possible Injection)"
+    if expected_fps.is_integer():
+        return "NOTICE: Rigid Frame Timing (Monitor for OBS)"
+    return "OK: Natural Stream Variance"
 
 
 @app.post("/api/v1/audit_stream", response_model=KYCResponse)
 async def audit_video_stream(video: UploadFile = File(...)):
-    """
-    Ingests a video payload and runs it through the 3-stage security gateway.
-    """
     if not video.filename.endswith(('.mp4', '.avi', '.mov', '.webm')):
         raise HTTPException(status_code=400, detail="Unsupported media format.")
 
     temp_path = f"temp_uploads/{uuid.uuid4()}_{video.filename}"
 
     try:
-        # 1. Save Payload
         with open(temp_path, "wb") as buffer:
             shutil.copyfileobj(video.file, buffer)
 
         start_time = time.time()
 
-        # 2. Execute Modular Engine
+        # Fast Pre-check: Telemetry
+        telemetry = analyze_stream_telemetry(temp_path)
+
+        # Heavy Compute: 4-Layer PAD Engine
         results = engine.analyze_video(temp_path)
 
         proc_time = round(time.time() - start_time, 2)
 
-        # 3. Format Response for the Audit Dashboard
         response = KYCResponse(
             processing_time_seconds=proc_time,
-            stage_1_sensor=StageResult(
-                score=results["replay_attack_score"],
+            telemetry_status=telemetry,
+            stage_1_sensor_prnu=StageResult(
+                score=results["prnu_energy"],
+                passed=not results["is_virtual_camera"],
+                details="PRNU variance check for physical CMOS sensor"
+            ),
+            stage_2_presentation_replay=StageResult(
+                score=results["moire_score"],
                 passed=not results["is_replay_attack"],
-                details="Moiré frequency threshold check"
+                details="Moiré high-frequency screen grid check"
             ),
-            stage_2_biological=StageResult(
-                score=results["biological_bpm"],
+            stage_3_biological_rppg=StageResult(
+                score=results["rppg_snr"],
                 passed=results["is_lively"],
-                details="rPPG heartbeat extraction (45-150 BPM target)"
+                details=f"CHROM rPPG SNR threshold (Pulse: {results['biological_bpm']:.1f} BPM)"
             ),
-            stage_3_temporal_ai=StageResult(
+            stage_4_synthetic_ftca=StageResult(
                 score=results["ai_manipulation_score"],
                 passed=not results["is_deepfake"],
-                details="3D CNN temporal inconsistency check"
+                details="FTCA Frequency-Temporal Cross-Attention check"
             ),
-            final_decision="APPROVED"  # Will be overwritten if any stage fails
+            final_decision="APPROVED"
         )
 
-        # 4. The Waterfall Logic (Determine Final Decision)
-        if not response.stage_1_sensor.passed:
-            response.final_decision = "DENIED: REPLAY_ATTACK_DETECTED"
-        elif not response.stage_2_biological.passed:
-            response.final_decision = "DENIED: NO_BIOLOGICAL_LIVENESS"
-        elif not response.stage_3_temporal_ai.passed:
-            response.final_decision = "DENIED: SYNTHETIC_MEDIA_DETECTED"
+        # The Strict Waterfall Liveness Gate
+        if not response.stage_1_sensor_prnu.passed:
+            response.final_decision = "DENIED: VIRTUAL_CAMERA_INJECTION"
+        elif not response.stage_2_presentation_replay.passed:
+            response.final_decision = "DENIED: SCREEN_REPLAY_ATTACK"
+        elif not response.stage_3_biological_rppg.passed:
+            response.final_decision = "DENIED: BIOLOGICAL_LIVENESS_FAILED"
+        elif not response.stage_4_synthetic_ftca.passed:
+            response.final_decision = "DENIED: SYNTHETIC_AI_GENERATION"
 
         return response
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Engine Failure: {str(e)}")
-
     finally:
-        # Clean up the artifact to preserve storage
         if os.path.exists(temp_path):
             os.remove(temp_path)
-
-
-@app.get("/api/v1/system_status")
-def health_check():
-    """Endpoint for frontend to verify engine is online before sending video"""
-    return {
-        "status": "online",
-        "deepfake_module_device": str(engine.deepfake_module.device)
-    }
