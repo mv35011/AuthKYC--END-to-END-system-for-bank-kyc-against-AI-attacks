@@ -1,6 +1,7 @@
 import cv2
 import torch
 import os
+import glob
 from facenet_pytorch import MTCNN
 from torchvision import transforms
 
@@ -27,46 +28,41 @@ class DeepfakeDataExtractor:
         ])
 
     def extract_frames(self, video_path):
-        """Reads video and extracts all frames as a list of RGB numpy arrays."""
         cap = cv2.VideoCapture(video_path)
         frames = []
         while cap.isOpened():
             ret, frame = cap.read()
-            if not ret:
-                break
-            # OpenCV reads in BGR, we need RGB for MTCNN
+            if not ret: break
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             frames.append(frame_rgb)
         cap.release()
         return frames
 
     def process_video(self, video_path, output_dir):
-        """Processes a single video into sequential tensor chunks."""
         video_name = os.path.basename(video_path).split('.')[0]
-        frames = self.extract_frames(video_path)
+        output_path = os.path.join(output_dir, f"{video_name}.pt")
 
-        if not frames:
-            print(f"Failed to read {video_path}")
+        # Skip if already processed (resumes gracefully if RunPod preempts)
+        if os.path.exists(output_path):
             return
 
-        print(f"Processing {len(frames)} frames from {video_name}...")
+        frames = self.extract_frames(video_path)
+        if not frames: return
 
-        # Batch process frames through MTCNN to maximize GPU usage
-        # Note: For very long videos, you might need to chunk this to avoid VRAM OOM
+        # Batch process frames through MTCNN
+        # Note: If VRAM OOMs on 48GB, chunk 'frames' list into blocks of 300
         faces = self.mtcnn(frames)
 
         valid_faces = []
         for face in faces:
             if face is not None:
-                # face is a tensor of shape [3, 224, 224], values 0-255
                 face_normalized = self.transform(face / 255.0)
                 valid_faces.append(face_normalized)
 
         if len(valid_faces) < self.seq_length:
-            print(f"Not enough valid faces found in {video_name}. Skipping.")
             return
 
-        # Stack into a single tensor: [Total_Faces, 3, 22 4, 224]
+        # Stack into a single tensor: [Total_Faces, 3, 224, 224]
         face_tensor = torch.stack(valid_faces)
 
         # Chunk into sequences: [Num_Sequences, seq_length, 3, 224, 224]
@@ -75,18 +71,29 @@ class DeepfakeDataExtractor:
             num_sequences, self.seq_length, 3, self.image_size, self.image_size
         )
 
-        # Save the sequences to disk
         os.makedirs(output_dir, exist_ok=True)
-        output_path = os.path.join(output_dir, f"{video_name}.pt")
         torch.save(sequences, output_path)
-        print(f"Saved {num_sequences} sequences to {output_path}")
+        print(f"Processed {video_name} -> {num_sequences} sequences extracted.")
 
 
-# --- Execution Example ---
+# --- Bulk Execution Example ---
 if __name__ == "__main__":
-    # Point this to your ILLUSION dataset directory
-    input_video = "sample_deepfake.mp4"
-    output_directory = "./processed_tensors/fake/"
-
     extractor = DeepfakeDataExtractor(device='cuda', seq_length=16)
-    extractor.process_video(input_video, output_directory)
+
+    # Example directory structure:
+    # /datasets/ILLUSION/fake/video1.mp4
+    # /datasets/ILLUSION/real/video2.mp4
+
+    source_base_dir = "/workspace/datasets/ILLUSION"
+    output_base_dir = "./processed_tensors"
+
+    for category in ['real', 'fake']:
+        source_dir = os.path.join(source_base_dir, category)
+        output_dir = os.path.join(output_base_dir, category)
+
+        if os.path.exists(source_dir):
+            video_files = glob.glob(os.path.join(source_dir, "*.mp4"))
+            print(f"Found {len(video_files)} videos in {category} folder.")
+
+            for video_path in video_files:
+                extractor.process_video(video_path, output_dir)

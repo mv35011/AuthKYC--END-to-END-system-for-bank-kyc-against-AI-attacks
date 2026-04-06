@@ -7,14 +7,29 @@ from torchvision.transforms import v2
 class DeepfakeVideoDataset(Dataset):
     def __init__(self, data_dir, is_training=True):
         """
-        Expects a directory containing .pt files of shape [Num_Sequences, 16, 3, 224, 224]
-        Labeling convention: Files starting with 'real_' are 0, 'fake_' are 1.
+        Expects a base directory containing 'real' and 'fake' subfolders with .pt files.
         """
-        self.data_dir = data_dir
-        self.file_paths = [os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith('.pt')]
         self.is_training = is_training
+        self.file_paths = []
+        self.labels = []
 
-        # GPU-friendly augmentations that apply consistently across the time dimension
+        # Load from 'fake' directory (Label 1.0)
+        fake_dir = os.path.join(data_dir, 'fake')
+        if os.path.exists(fake_dir):
+            for f in os.listdir(fake_dir):
+                if f.endswith('.pt'):
+                    self.file_paths.append(os.path.join(fake_dir, f))
+                    self.labels.append(1.0)
+
+        # Load from 'real' directory (Label 0.0)
+        real_dir = os.path.join(data_dir, 'real')
+        if os.path.exists(real_dir):
+            for f in os.listdir(real_dir):
+                if f.endswith('.pt'):
+                    self.file_paths.append(os.path.join(real_dir, f))
+                    self.labels.append(0.0)
+
+        # GPU-friendly augmentations
         self.train_transforms = v2.Compose([
             v2.RandomHorizontalFlip(p=0.5),
             v2.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1),
@@ -26,25 +41,18 @@ class DeepfakeVideoDataset(Dataset):
 
     def __getitem__(self, idx):
         file_path = self.file_paths[idx]
+        label = self.labels[idx]
 
-        # Determine label from filename (0 for real, 1 for fake)
-        filename = os.path.basename(file_path).lower()
-        label = 1.0 if 'fake' in filename else 0.0
-
-        # Load the pre-extracted tensor: [Seq, 16, 3, 224, 224]
         tensor_data = torch.load(file_path)
 
-        # Randomly select one 16-frame sequence from the video file to add variance
         num_sequences = tensor_data.shape[0]
         seq_idx = torch.randint(0, num_sequences, (1,)).item() if self.is_training else 0
         sequence = tensor_data[seq_idx]
 
         if self.is_training:
-            # Apply augmentations across the [16, 3, 224, 224] block
             sequence = self.train_transforms(sequence)
 
-        # PyTorch 3D CNNs expect shape: [Channels, Depth(Time), Height, Width]
-        # Current shape is [16, 3, 224, 224]. We must permute to [3, 16, 224, 224]
+        # Output shape matches FTCA requirement: [3, 16, 224, 224]
         sequence = sequence.permute(1, 0, 2, 3)
 
         return sequence, torch.tensor([label], dtype=torch.float32)

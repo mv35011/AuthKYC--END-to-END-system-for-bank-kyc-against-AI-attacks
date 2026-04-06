@@ -2,42 +2,45 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from torchvision.models.video import r3d_18, R3D_18_Weights
-from dataset import DeepfakeVideoDataset
 import time
+import os
+
+# Import our custom novel architecture
+from modules.ftca_module import FTCABlock
+from dataset import DeepfakeVideoDataset
 
 
 def train_model():
     # 1. Hardware Setup
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Training on: {device}")
+    print(f"Training FTCA Architecture on: {device}")
 
-    # 2. Load Pre-trained 3D ResNet and Modify Classification Head
-    weights = R3D_18_Weights.DEFAULT
-    model = r3d_18(weights=weights)
-
-    # Replace the final fully connected layer for binary classification (Fake vs Real)
-    num_ftrs = model.fc.in_features
-    model.fc = nn.Linear(num_ftrs, 1)
+    # 2. Initialize our Custom FTCA Model
+    # The FTCABlock already has the correct binary classification head built-in
+    model = FTCABlock(embed_dim=512, num_heads=8)
     model = model.to(device)
 
-    # 3. Data Loaders (Tweak batch_size based on your A6000 VRAM, start with 16 or 32)
-    train_dataset = DeepfakeVideoDataset(data_dir='./processed_tensors/train', is_training=True)
-    val_dataset = DeepfakeVideoDataset(data_dir='./processed_tensors/val', is_training=False)
+    # 3. Data Loaders (A6000 can easily handle batch_size 32 with AMP)
+    train_dir = './processed_tensors/train'
+    val_dir = './processed_tensors/val'
 
-    # num_workers=8 is ideal for a beefy RunPod instance
-    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True, num_workers=8, pin_memory=True)
-    val_loader = DataLoader(val_dataset, batch_size=16, shuffle=False, num_workers=8, pin_memory=True)
+    os.makedirs(train_dir, exist_ok=True)
+    os.makedirs(val_dir, exist_ok=True)
+
+    train_dataset = DeepfakeVideoDataset(data_dir=train_dir, is_training=True)
+    val_dataset = DeepfakeVideoDataset(data_dir=val_dir, is_training=False)
+
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=8, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=8, pin_memory=True)
 
     # 4. Optimization Strategy
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-3)
 
-    # AMP Scaler for Half-Precision Training (Saves VRAM and RunPod $)
+    # AMP Scaler for Half-Precision Training
     scaler = torch.amp.GradScaler('cuda')
 
-    # 5. The Training Loop
-    epochs = 10
+    epochs = 15
     best_val_loss = float('inf')
 
     for epoch in range(epochs):
@@ -49,21 +52,20 @@ def train_model():
             inputs, labels = inputs.to(device, non_blocking=True), labels.to(device, non_blocking=True)
             optimizer.zero_grad(set_to_none=True)
 
-            # Cast operations to mixed precision
+            # Mixed precision training
             with torch.amp.autocast('cuda'):
-                outputs = model(inputs)
-                loss = criterion(outputs, labels)
+                logits = model(inputs)
+                loss = criterion(logits, labels)
 
-            # Scale loss and backpropagate
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
 
             running_loss += loss.item() * inputs.size(0)
 
-        epoch_loss = running_loss / len(train_loader.dataset)
+        epoch_loss = running_loss / max(1, len(train_loader.dataset))
 
-        # 6. Quick Validation Loop
+        # 6. Validation Loop
         model.eval()
         val_loss = 0.0
         correct = 0
@@ -72,25 +74,25 @@ def train_model():
             for inputs, labels in val_loader:
                 inputs, labels = inputs.to(device, non_blocking=True), labels.to(device, non_blocking=True)
                 with torch.amp.autocast('cuda'):
-                    outputs = model(inputs)
-                    loss = criterion(outputs, labels)
+                    logits = model(inputs)
+                    loss = criterion(logits, labels)
 
                 val_loss += loss.item() * inputs.size(0)
-                predictions = torch.sigmoid(outputs) > 0.5
+                predictions = torch.sigmoid(logits) > 0.5
                 total += labels.size(0)
                 correct += (predictions == labels).sum().item()
 
-        val_loss = val_loss / len(val_loader.dataset)
-        val_acc = correct / total
+        val_loss = val_loss / max(1, len(val_loader.dataset))
+        val_acc = correct / max(1, total)
 
         print(f"Epoch {epoch + 1}/{epochs} | Time: {time.time() - start_time:.2f}s")
         print(f"Train Loss: {epoch_loss:.4f} | Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f}")
 
-        # Save Checkpoint to avoid losing progress if RunPod preempts
+        # Save Checkpoint
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            torch.save(model.state_dict(), 'best_temporal_deepfake_model.pth')
-            print(">>> Saved New Best Model Checkpoint")
+            torch.save(model.state_dict(), 'best_ftca_pad_model.pth')
+            print(">>> Saved New Best FTCA Model Checkpoint")
 
 
 if __name__ == "__main__":
