@@ -43,8 +43,13 @@ class DeepfakeDataExtractor:
         if not frames: return
 
         valid_faces = []
-        # FIX 1: Chunk frames to prevent CUDA Illegal Memory Access
         batch_size = 32
+
+        # --- THE HARD LIMIT ---
+        max_sequences = 2
+        max_frames_needed = self.seq_length * max_sequences
+        # ----------------------
+
         for i in range(0, len(frames), batch_size):
             chunk = frames[i:i + batch_size]
             try:
@@ -54,27 +59,29 @@ class DeepfakeDataExtractor:
                         if face is not None:
                             valid_faces.append(self.transform(face / 255.0))
             except Exception as e:
-                # If a corrupted frame breaks MTCNN, just skip it and keep going
                 continue
 
+            # --- EARLY STOPPING: Shut down MTCNN once we have 32 faces ---
+            if len(valid_faces) >= max_frames_needed:
+                break
+
+        # If we couldn't even find enough faces for 1 sequence, skip the video
         if len(valid_faces) < self.seq_length: return
 
+        # Enforce the strict cut-off before converting to a tensor
+        valid_faces = valid_faces[:max_frames_needed]
+
+        # Now stack into a tensor (It will only ever be a max of 32 faces)
         face_tensor = torch.stack(valid_faces)
         num_sequences = len(face_tensor) // self.seq_length
 
-        # --- THE SAFETY CAP: MAX 4 SEQUENCES PER VIDEO ---
-        max_sequences = 2
-        num_sequences = min(num_sequences, max_sequences)
-        # -------------------------------------------------
-
-        sequences = face_tensor[:num_sequences * self.seq_length].view(
+        sequences = face_tensor.view(
             num_sequences, self.seq_length, 3, self.image_size, self.image_size
         )
 
         os.makedirs(output_dir, exist_ok=True)
         torch.save(sequences, output_path)
         print(f"Processed {video_name} -> {num_sequences} seqs saved to {output_dir.split('/')[-2]}")
-
 
 if __name__ == "__main__":
     extractor = DeepfakeDataExtractor(device='cuda', seq_length=16)
