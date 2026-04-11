@@ -30,6 +30,7 @@ def train_model():
     train_dataset = DeepfakeVideoDataset(data_dir=train_dir, is_training=True)
     val_dataset = DeepfakeVideoDataset(data_dir=val_dir, is_training=False)
 
+    # Reverted to Linux multiprocessing and A6000 batch sizes
     train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=8, pin_memory=True)
     val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=8, pin_memory=True)
 

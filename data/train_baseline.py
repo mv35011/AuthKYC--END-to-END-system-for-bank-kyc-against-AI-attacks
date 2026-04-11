@@ -25,8 +25,9 @@ def train_baseline():
     val_dataset = DeepfakeVideoDataset(data_dir=val_dir, is_training=False)
 
     # V100 can easily handle batch_size 32 for a 2D model
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=0, pin_memory=True)
-    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=0, pin_memory=True)
+    # Reverted to Linux multiprocessing and A6000 batch sizes
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=8, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=8, pin_memory=True)
 
     # 3. Optimization Strategy (As defined in Experiment 1)
     criterion = nn.BCEWithLogitsLoss()

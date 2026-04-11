@@ -84,8 +84,11 @@ if __name__ == "__main__":
     # /datasets/ILLUSION/fake/video1.mp4
     # /datasets/ILLUSION/real/video2.mp4
 
-    source_base_dir = "/workspace/datasets/ILLUSION"
-    output_base_dir = "./processed_tensors"
+    # 1. SET THIS PATH: Where you will unzip the FF++ Kaggle download
+    source_base_dir = "/workspace/FaceForensics_Dataset"
+
+    # 2. SET THIS PATH: Where the .pt tensors will be saved
+    output_base_dir = "/workspace/defensive-kyc/processed_tensors"
 
     for category in ['real', 'fake']:
         source_dir = os.path.join(source_base_dir, category)
