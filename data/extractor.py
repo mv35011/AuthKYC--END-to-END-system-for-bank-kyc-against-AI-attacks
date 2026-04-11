@@ -61,6 +61,12 @@ class DeepfakeDataExtractor:
 
         face_tensor = torch.stack(valid_faces)
         num_sequences = len(face_tensor) // self.seq_length
+
+        # --- THE SAFETY CAP: MAX 4 SEQUENCES PER VIDEO ---
+        max_sequences = 2
+        num_sequences = min(num_sequences, max_sequences)
+        # -------------------------------------------------
+
         sequences = face_tensor[:num_sequences * self.seq_length].view(
             num_sequences, self.seq_length, 3, self.image_size, self.image_size
         )
@@ -75,10 +81,15 @@ if __name__ == "__main__":
     source_base_dir = "/workspace/ff-c23/FaceForensics++_C23"
     output_base_dir = "./processed_tensors"
 
+    # THE STORAGE SAVER: Only process Originals, Deepfakes, and NeuralTextures
     folder_mapping = {
-        'original': 'real', 'Deepfakes': 'fake', 'Face2Face': 'fake',
-        'FaceSwap': 'fake', 'NeuralTextures': 'fake', 'FaceShifter': 'fake',
-        'DeepFakeDetection': 'fake'
+        'original': 'real',
+        'Deepfakes': 'fake',
+        'NeuralTextures': 'fake'
+        # 'Face2Face': 'fake',
+        # 'FaceSwap': 'fake',
+        # 'FaceShifter': 'fake',
+        # 'DeepFakeDetection': 'fake'
     }
 
     for input_folder, label in folder_mapping.items():
