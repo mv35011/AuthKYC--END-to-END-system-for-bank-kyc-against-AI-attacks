@@ -92,11 +92,11 @@ if __name__ == "__main__":
     folder_mapping = {
         'original': 'real',
         'Deepfakes': 'fake',
-        'NeuralTextures': 'fake'
-        # 'Face2Face': 'fake',
-        # 'FaceSwap': 'fake',
-        # 'FaceShifter': 'fake',
-        # 'DeepFakeDetection': 'fake'
+        'NeuralTextures': 'fake',
+        'Face2Face': 'fake',
+        'FaceSwap': 'fake',
+        'FaceShifter': 'fake',
+        'DeepFakeDetection': 'fake'
     }
 
     for input_folder, label in folder_mapping.items():
