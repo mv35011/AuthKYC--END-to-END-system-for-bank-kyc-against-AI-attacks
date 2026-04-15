@@ -25,8 +25,8 @@ def train_baseline():
     train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=8, pin_memory=True)
     val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=8, pin_memory=True)
 
-    pos_weight_val = torch.tensor([1000.0 / 6000.0]).to(device)
-    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight_val)
+    # REMOVED POS_WEIGHT
+    criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
     scaler = torch.amp.GradScaler('cuda')
 
@@ -86,7 +86,6 @@ def train_baseline():
             torch.save(model.state_dict(), 'best_xception_baseline.pth')
             print("   >>> Saved New Best Baseline Checkpoint")
 
-    # The Final Summary Block
     print(f"\n===================================================")
     print(f"[XCEPTION] PHASE 3 COMPLETE")
     print(f"Best Validation Loss: {best_val_loss:.4f}")

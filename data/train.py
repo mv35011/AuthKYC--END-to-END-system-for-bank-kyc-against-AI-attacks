@@ -8,6 +8,7 @@ import os
 from modules.ftca_module import FTCABlock
 from dataset import DeepfakeVideoDataset
 
+
 def train_model():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"\n===================================================")
@@ -26,15 +27,21 @@ def train_model():
     train_dataset = DeepfakeVideoDataset(data_dir=train_dir, is_training=True)
     val_dataset = DeepfakeVideoDataset(data_dir=val_dir, is_training=False)
 
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=8, pin_memory=True)
-    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=8, pin_memory=True)
+    # BATCH SIZE REDUCED TO 16 to handle the massive 8-sequence tensors
+    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True, num_workers=8, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=16, shuffle=False, num_workers=8, pin_memory=True)
 
-    pos_weight_val = torch.tensor([1000.0 / 6000.0]).to(device)
-    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight_val)
+    # REMOVED POS_WEIGHT: Dataset is physically balanced 50/50 now
+    criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-3)
+
+    # ADDED SCHEDULER: Drops learning rate if the model gets stuck
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3)
+
     scaler = torch.amp.GradScaler('cuda')
 
-    epochs = 15
+    # INCREASED EPOCHS
+    epochs = 30
     best_val_loss = float('inf')
     best_val_acc = 0.0
 
@@ -78,7 +85,11 @@ def train_model():
         val_loss = val_loss / max(1, len(val_loader.dataset))
         val_acc = correct / max(1, total)
 
-        print(f"Epoch {epoch + 1}/{epochs} | Time: {time.time() - start_time:.2f}s | Train Loss: {epoch_loss:.4f} | Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f}")
+        # Step the scheduler based on validation loss
+        scheduler.step(val_loss)
+
+        print(
+            f"Epoch {epoch + 1}/{epochs} | Time: {time.time() - start_time:.2f}s | Train Loss: {epoch_loss:.4f} | Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f}")
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -86,12 +97,12 @@ def train_model():
             torch.save(model.state_dict(), 'best_ftca_pad_model.pth')
             print("   >>> Saved New Best FTCA Checkpoint")
 
-    # The Final Summary Block
     print(f"\n===================================================")
     print(f"[FTCA] PHASE 2 COMPLETE")
     print(f"Best Validation Loss: {best_val_loss:.4f}")
     print(f"Best Validation Accuracy: {best_val_acc * 100:.2f}%")
     print(f"===================================================\n")
+
 
 if __name__ == "__main__":
     train_model()
