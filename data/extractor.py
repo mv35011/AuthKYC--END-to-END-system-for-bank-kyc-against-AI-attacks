@@ -6,12 +6,13 @@ import random
 from facenet_pytorch import MTCNN
 from torchvision import transforms
 
-
 class DeepfakeDataExtractor:
-    def __init__(self, device='cuda', image_size=224, seq_length=16):
+    # --- ADDED MAX_SEQUENCES TO INIT ---
+    def __init__(self, device='cuda', image_size=224, seq_length=16, max_sequences=8):
         self.device = device if torch.cuda.is_available() else 'cpu'
         self.image_size = image_size
         self.seq_length = seq_length
+        self.max_sequences = max_sequences
 
         self.mtcnn = MTCNN(
             image_size=self.image_size, margin=40, keep_all=False,
@@ -45,10 +46,10 @@ class DeepfakeDataExtractor:
         valid_faces = []
         batch_size = 32
 
-        # --- THE HARD LIMIT ---
-        max_sequences = 2
-        max_frames_needed = self.seq_length * max_sequences
-        # ----------------------
+        # --- THE DYNAMIC LIMIT ---
+        # Now it listens to the class setting (8) instead of a hardcoded 2
+        max_frames_needed = self.seq_length * self.max_sequences
+        # -------------------------
 
         for i in range(0, len(frames), batch_size):
             chunk = frames[i:i + batch_size]
@@ -61,17 +62,14 @@ class DeepfakeDataExtractor:
             except Exception as e:
                 continue
 
-            # --- EARLY STOPPING: Shut down MTCNN once we have 32 faces ---
+            # --- EARLY STOPPING ---
             if len(valid_faces) >= max_frames_needed:
                 break
 
-        # If we couldn't even find enough faces for 1 sequence, skip the video
         if len(valid_faces) < self.seq_length: return
 
-        # Enforce the strict cut-off before converting to a tensor
         valid_faces = valid_faces[:max_frames_needed]
 
-        # Now stack into a tensor (It will only ever be a max of 32 faces)
         face_tensor = torch.stack(valid_faces)
         num_sequences = len(face_tensor) // self.seq_length
 
@@ -84,15 +82,10 @@ class DeepfakeDataExtractor:
         print(f"Processed {video_name} -> {num_sequences} seqs saved to {output_dir.split('/')[-2]}")
 
 
-import glob
-import random
-import os
-
 if __name__ == "__main__":
     # --- 1. INITIALIZE EXTRACTOR ---
-    extractor = DeepfakeDataExtractor(seq_length=16, image_size=224)
-    # UNLEASH THE CAP: 8 sequences (128 continuous frames)
-    extractor.max_sequences = 8
+    # Setting max_sequences directly in the constructor
+    extractor = DeepfakeDataExtractor(seq_length=16, image_size=224, max_sequences=8)
 
     print("[System] Initializing Data Aggregator (Experiment 2)...")
 
@@ -119,8 +112,6 @@ if __name__ == "__main__":
         fake_paths.extend(glob.glob(f"{folder}/*.mp4"))
 
     # --- 4. SHUFFLE AND CAP AT 1500 (The Balance Fix) ---
-    # We use a fixed seed (42) so the shuffle is identical every time you run this script.
-    # This completely prevents the data leakage bug we found yesterday!
     random.seed(42)
     random.shuffle(real_paths)
     random.shuffle(fake_paths)
@@ -132,8 +123,6 @@ if __name__ == "__main__":
     print(f"Total Fake Videos Selected: {len(fake_videos)}")
 
     # --- 5. STRICT TRAIN/VAL SPLIT (80/20) ---
-    # We slice the arrays directly to guarantee faces do not cross over.
-    # 1200 for training, 300 for validation per class.
     train_real = real_videos[:1200]
     val_real = real_videos[1200:]
 
