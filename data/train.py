@@ -29,7 +29,8 @@ def train_model():
     train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=8, pin_memory=True)
     val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=8, pin_memory=True)
 
-    criterion = nn.BCEWithLogitsLoss()
+    pos_weight_val = torch.tensor([1000.0 / 6000.0]).to(device)
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight_val)
     optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-3)
     scaler = torch.amp.GradScaler('cuda')
 

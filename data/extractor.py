@@ -83,30 +83,78 @@ class DeepfakeDataExtractor:
         torch.save(sequences, output_path)
         print(f"Processed {video_name} -> {num_sequences} seqs saved to {output_dir.split('/')[-2]}")
 
+
+import glob
+import random
+import os
+
 if __name__ == "__main__":
-    extractor = DeepfakeDataExtractor(device='cuda', seq_length=16)
-    source_base_dir = "/workspace/ff-c23/FaceForensics++_C23"
-    output_base_dir = "./processed_tensors"
+    # --- 1. INITIALIZE EXTRACTOR ---
+    extractor = DeepfakeDataExtractor(seq_length=16, image_size=224)
+    # UNLEASH THE CAP: 8 sequences (128 continuous frames)
+    extractor.max_sequences = 8
 
-    # THE STORAGE SAVER: Only process Originals, Deepfakes, and NeuralTextures
-    folder_mapping = {
-        'original': 'real',
-        'Deepfakes': 'fake',
-        'NeuralTextures': 'fake',
-        'Face2Face': 'fake',
-        'FaceSwap': 'fake',
-        'FaceShifter': 'fake',
-        'DeepFakeDetection': 'fake'
-    }
+    print("[System] Initializing Data Aggregator (Experiment 2)...")
 
-    for input_folder, label in folder_mapping.items():
-        source_dir = os.path.join(source_base_dir, input_folder)
-        if os.path.exists(source_dir):
-            video_files = glob.glob(os.path.join(source_dir, "**/*.mp4"), recursive=True)
-            print(f"Found {len(video_files)} videos in {input_folder}...")
+    # --- 2. GATHER REAL VIDEOS (FF++ and Celeb-DF) ---
+    real_paths = []
+    real_folders = [
+        '/workspace/ff-c23/FaceForensics++_C23/original',
+        '/workspace/celeb-df-v2/Celeb-real',
+        '/workspace/celeb-df-v2/YouTube-real'
+    ]
+    for folder in real_folders:
+        real_paths.extend(glob.glob(f"{folder}/*.mp4"))
 
-            for video_path in video_files:
-                # FIX 2: Dynamically split into 80% train and 20% val folders
-                split_folder = "val" if random.random() < 0.2 else "train"
-                output_dir = os.path.join(output_base_dir, split_folder, label)
-                extractor.process_video(video_path, output_dir)
+    # --- 3. GATHER FAKE VIDEOS (FF++) ---
+    fake_paths = []
+    fake_folders = [
+        '/workspace/ff-c23/FaceForensics++_C23/Deepfakes',
+        '/workspace/ff-c23/FaceForensics++_C23/Face2Face',
+        '/workspace/ff-c23/FaceForensics++_C23/FaceSwap',
+        '/workspace/ff-c23/FaceForensics++_C23/FaceShifter',
+        '/workspace/ff-c23/FaceForensics++_C23/DeepFakeDetection'
+    ]
+    for folder in fake_folders:
+        fake_paths.extend(glob.glob(f"{folder}/*.mp4"))
+
+    # --- 4. SHUFFLE AND CAP AT 1500 (The Balance Fix) ---
+    # We use a fixed seed (42) so the shuffle is identical every time you run this script.
+    # This completely prevents the data leakage bug we found yesterday!
+    random.seed(42)
+    random.shuffle(real_paths)
+    random.shuffle(fake_paths)
+
+    real_videos = real_paths[:1500]
+    fake_videos = fake_paths[:1500]
+
+    print(f"Total Real Videos Selected: {len(real_videos)}")
+    print(f"Total Fake Videos Selected: {len(fake_videos)}")
+
+    # --- 5. STRICT TRAIN/VAL SPLIT (80/20) ---
+    # We slice the arrays directly to guarantee faces do not cross over.
+    # 1200 for training, 300 for validation per class.
+    train_real = real_videos[:1200]
+    val_real = real_videos[1200:]
+
+    train_fake = fake_videos[:1200]
+    val_fake = fake_videos[1200:]
+
+    # --- 6. EXECUTE EXTRACTION ---
+    print("\n--- Extracting Training Data (REAL) ---")
+    for path in train_real:
+        extractor.process_video(path, './processed_tensors/train/real')
+
+    print("\n--- Extracting Training Data (FAKE) ---")
+    for path in train_fake:
+        extractor.process_video(path, './processed_tensors/train/fake')
+
+    print("\n--- Extracting Validation Data (REAL) ---")
+    for path in val_real:
+        extractor.process_video(path, './processed_tensors/val/real')
+
+    print("\n--- Extracting Validation Data (FAKE) ---")
+    for path in val_fake:
+        extractor.process_video(path, './processed_tensors/val/fake')
+
+    print("\n[System] Phase 1: Data Extraction & Balancing Complete.")
