@@ -73,6 +73,9 @@ class DeepfakeDataExtractor:
         face_tensor = torch.stack(valid_faces)
         num_sequences = len(face_tensor) // self.seq_length
 
+        exact_frames_needed = num_sequences * self.seq_length
+        face_tensor = face_tensor[:exact_frames_needed]
+
         sequences = face_tensor.view(
             num_sequences, self.seq_length, 3, self.image_size, self.image_size
         )
