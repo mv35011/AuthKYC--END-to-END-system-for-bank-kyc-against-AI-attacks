@@ -7,6 +7,7 @@ import time
 import os
 from dataset import DeepfakeVideoDataset
 
+
 def train_baseline():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"\n===================================================")
@@ -25,7 +26,6 @@ def train_baseline():
     train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=8, pin_memory=True)
     val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=8, pin_memory=True)
 
-    # REMOVED POS_WEIGHT
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
     scaler = torch.amp.GradScaler('cuda')
@@ -41,7 +41,13 @@ def train_baseline():
 
         for inputs, labels in train_loader:
             inputs, labels = inputs.to(device, non_blocking=True), labels.to(device, non_blocking=True)
-            inputs_2d = inputs[:, :, 0, :, :]
+
+            # --- THE FIX: Random Temporal Frame Extraction for Training ---
+            B, C, T, H, W = inputs.shape
+            t_idx = torch.randint(0, T, (B,), device=device)
+            # Advanced PyTorch indexing (faster than torch.stack)
+            inputs_2d = inputs[torch.arange(B, device=device), :, t_idx, :, :]
+            # -------------------------------------------------------------
 
             optimizer.zero_grad(set_to_none=True)
 
@@ -64,7 +70,12 @@ def train_baseline():
         with torch.no_grad():
             for inputs, labels in val_loader:
                 inputs, labels = inputs.to(device, non_blocking=True), labels.to(device, non_blocking=True)
-                inputs_2d = inputs[:, :, 0, :, :]
+
+                # --- THE FIX: Center Frame Extraction for Validation ---
+                B, C, T, H, W = inputs.shape
+                center_idx = T // 2
+                inputs_2d = inputs[:, :, center_idx, :, :]
+                # -------------------------------------------------------
 
                 with torch.amp.autocast('cuda'):
                     outputs = model(inputs_2d)
@@ -78,7 +89,8 @@ def train_baseline():
         val_loss = val_loss / max(1, len(val_loader.dataset))
         val_acc = correct / max(1, total)
 
-        print(f"Epoch {epoch + 1}/{epochs} | Time: {time.time() - start_time:.2f}s | Train Loss: {epoch_loss:.4f} | Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f}")
+        print(
+            f"Epoch {epoch + 1}/{epochs} | Time: {time.time() - start_time:.2f}s | Train Loss: {epoch_loss:.4f} | Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f}")
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -91,6 +103,7 @@ def train_baseline():
     print(f"Best Validation Loss: {best_val_loss:.4f}")
     print(f"Best Validation Accuracy: {best_val_acc * 100:.2f}%")
     print(f"===================================================\n")
+
 
 if __name__ == "__main__":
     train_baseline()
