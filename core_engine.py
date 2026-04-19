@@ -15,7 +15,7 @@ from modules.ftca_module import FTCABlock
 class KYCOrchestrator:
     def __init__(self):
         print("[Engine] Initializing 4-Layer PAD System...")
-        self.replay_module = ReplayAttackDetector(threshold=75000)
+        self.replay_module = ReplayAttackDetector(threshold=1500)
         self.rppg_module = AdvancedrPPGDetector(fps=30)
         self.prnu_module = PRNUDetector(energy_threshold=0.5)
 
@@ -108,9 +108,12 @@ class KYCOrchestrator:
         # 1. Camera Authenticity (PRNU)
         prnu_energy, is_physical = self.prnu_module.analyze_fingerprint()
 
-        # 2. Presentation Attack (Moiré PMR Score)
+        # 2. Presentation Attack (Moiré Score)
+        # Screen replays LOSE high-frequency detail due to double compression
+        # (original → screen render → camera → encode), so they score LOW.
+        # Real cameras preserve high-freq texture. Score below threshold = replay.
         avg_moire = np.mean(moire_scores) if moire_scores else 0
-        is_replay = bool(avg_moire > self.replay_module.threshold)
+        is_replay = bool(avg_moire < self.replay_module.threshold)
 
         # 3. Biological Context (S3)
         bpm = rppg_results.get("bpm", 0.0)
@@ -130,9 +133,19 @@ class KYCOrchestrator:
                 logits = self.ftca_module(video_tensor)
                 ai_score = torch.sigmoid(logits).item()
 
-        # --- FINAL STRICT DECISION ---
-        # Bumped to 0.65 to accommodate the 15-epoch fine-tune caution margin
-        is_deepfake = bool(ai_score > 0.65)
+        # --- FINAL DECISION WITH BIOLOGICAL VOUCHING ---
+        # Base threshold for AI manipulation detection
+        base_threshold = 0.65
+
+        # If S1 (PRNU) confirms a real physical sensor AND S3 (rPPG) confirms a
+        # real heartbeat, we have strong independent physical evidence of a live human.
+        # In this case, we raise the FTCA threshold to 0.85 — the model needs to be
+        # very confident it's a deepfake to override two independent physical proofs.
+        # This compensates for the partially-trained frequency encoder (layer4 random init).
+        is_biologically_vouched = is_physical and is_lively and not is_replay
+        dynamic_threshold = 0.85 if is_biologically_vouched else base_threshold
+
+        is_deepfake = bool(ai_score > dynamic_threshold)
 
         return {
             "prnu_energy": float(prnu_energy),

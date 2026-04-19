@@ -27,7 +27,7 @@ def run_ablation_study():
             continue
 
         print(f"\n--- Testing Category: {category} ---")
-        print(f"{'File':<20} | {'Latency':>8} | {'S1-PRNU':>8} | {'S2-Moire':>9} | {'S3-rPPG':>8} | {'S4-FTCA':>8} | {'Result':<20}")
+        print(f"{'File':<20} | {'Latency':>8} | {'S1-PRNU':>12} | {'S2-Moire':>14} | {'S3-rPPG':>8} | {'S4-FTCA':>8} | {'Result':<20}")
         print("-" * 110)
 
         for filename in sorted(os.listdir(folder)):
@@ -70,8 +70,8 @@ def run_ablation_study():
 
             print(
                 f"{filename[:20]:<20} | {latency:>6.0f}ms | "
-                f"{prnu_display:>8} | "
-                f"{'PASS' if s2_moire_pass else 'FAIL':>9} | "
+                f"{prnu_display:>6} {results['prnu_energy']:.2f} | "
+                f"{'PASS' if s2_moire_pass else 'FAIL':>4} {results['moire_score']:>8.0f} | "
                 f"{'PASS' if s3_rppg_pass else 'FAIL':>8} | "
                 f"{results['ai_manipulation_score']:>7.3f}{'✓' if s4_ftca_pass else '✗'} | "
                 f"{rejection_stage:<20}"

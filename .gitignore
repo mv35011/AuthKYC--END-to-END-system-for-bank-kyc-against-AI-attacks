@@ -3,4 +3,5 @@
 datasets/
 videos/
 models/
-best_ftca_pad_model.pthvideos.zip
+best_ftca_pad_model.pth
+videos.zip
