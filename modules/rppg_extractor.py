@@ -5,17 +5,15 @@ from scipy.signal import butter, filtfilt, welch
 
 
 class AdvancedrPPGDetector:
-    def __init__(self, fps=30, window_seconds=5, snr_threshold=3.5):
+    def __init__(self, fps=30, window_seconds=10, snr_threshold=1.5):
         self.fps = fps
         self.buffer_size = fps * window_seconds
         self.snr_threshold = snr_threshold
 
-        # Buffers for the raw spatial means of R, G, B
         self.r_buffer = []
         self.g_buffer = []
         self.b_buffer = []
 
-        # MediaPipe Face Mesh optimized for CPU/Apple Silicon
         self.mp_face_mesh = mp.solutions.face_mesh
         self.face_mesh = self.mp_face_mesh.FaceMesh(
             max_num_faces=1,
@@ -24,21 +22,13 @@ class AdvancedrPPGDetector:
             min_tracking_confidence=0.5
         )
 
-        # Expanded ROI: Forehead and upper cheeks for better blood perfusion tracking
-        self.roi_indices = [
-            10, 151, 337, 336, 109, 108,  # Forehead
-            118, 119, 100, 126,  # Right Cheek
-            347, 348, 329, 355  # Left Cheek
-        ]
-
     def _design_bandpass_filter(self, lowcut=0.7, highcut=4.0, order=4):
-        """Bandpass for physiological range: 0.7 Hz to 4.0 Hz (42 to 240 BPM)"""
         nyquist = 0.5 * self.fps
         b, a = butter(order, [lowcut / nyquist, highcut / nyquist], btype='band')
         return b, a
 
     def extract_spatial_means(self, frame):
-        """Extracts the spatial average of R, G, B channels from the facial ROI."""
+        # Work in RGB space for MediaPipe, but extract means from RGB frame
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = self.face_mesh.process(rgb_frame)
 
@@ -47,90 +37,91 @@ class AdvancedrPPGDetector:
 
         face_landmarks = results.multi_face_landmarks[0]
         h, w, _ = frame.shape
-
-        # Map landmarks to pixel coordinates
-        roi_points = []
-        for idx in self.roi_indices:
-            lm = face_landmarks.landmark[idx]
-            roi_points.append((int(lm.x * w), int(lm.y * h)))
-
-        # Create a convex hull mask for the ROI points
         mask = np.zeros((h, w), dtype=np.uint8)
-        hull = cv2.convexHull(np.array(roi_points))
-        cv2.fillConvexPoly(mask, hull, 255)
 
-        # Calculate mean for each channel (R, G, B) strictly within the mask
-        # Note: OpenCV image format is BGR, so indices are 2=R, 1=G, 0=B
-        mean_b = cv2.mean(frame[:, :, 0], mask=mask)[0]
-        mean_g = cv2.mean(frame[:, :, 1], mask=mask)[0]
-        mean_r = cv2.mean(frame[:, :, 2], mask=mask)[0]
+        regions = {
+            "forehead": [10, 109, 67, 103, 54, 151, 337, 336, 338, 297, 332, 284],
+            "right_cheek": [117, 118, 119, 100, 126, 205, 206, 207, 142],
+            "left_cheek": [346, 347, 348, 329, 355, 425, 426, 427, 371]
+        }
 
-        # Draw the ROI for visual debugging
-        cv2.polylines(frame, [hull], True, (0, 255, 255), 1)
+        for name, indices in regions.items():
+            pts = np.array([
+                (int(face_landmarks.landmark[idx].x * w),
+                 int(face_landmarks.landmark[idx].y * h))
+                for idx in indices
+            ])
+            hull = cv2.convexHull(pts)
+            cv2.fillConvexPoly(mask, hull, 255)
+            cv2.polylines(frame, [hull], True, (0, 255, 255), 1)
+
+        # FIX 1: Extract from RGB frame, not BGR frame
+        # rgb_frame channels: 0=R, 1=G, 2=B
+        mean_r = cv2.mean(rgb_frame[:, :, 0], mask=mask)[0]
+        mean_g = cv2.mean(rgb_frame[:, :, 1], mask=mask)[0]
+        mean_b = cv2.mean(rgb_frame[:, :, 2], mask=mask)[0]
 
         return mean_r, mean_g, mean_b, frame
 
     def apply_chrom(self):
-        """Executes the CHROM algorithm on the buffered RGB signals."""
         r = np.array(self.r_buffer)
         g = np.array(self.g_buffer)
         b = np.array(self.b_buffer)
 
-        # 1. Normalize signals by their rolling mean
-        rn = r / (np.mean(r) + 1e-8)
-        gn = g / (np.mean(g) + 1e-8)
-        bn = b / (np.mean(b) + 1e-8)
+        # FIX 2: Use a proper sliding window mean (rolling, not global)
+        # Detrend each channel first to remove slow drift from auto-exposure
+        from scipy.signal import detrend
+        r = detrend(r)
+        g = detrend(g)
+        b = detrend(b)
 
-        # 2. Project into orthogonal chrominance space
-        x = 3 * rn - 2 * gn - bn
+        # Normalize: add back a unit mean so ratios make sense
+        rn = r / (np.mean(np.abs(r)) + 1e-8) + 1
+        gn = g / (np.mean(np.abs(g)) + 1e-8) + 1
+        bn = b / (np.mean(np.abs(b)) + 1e-8) + 1
+
+        # CHROM projection
+        x = 3 * rn - 2 * gn
         y = 1.5 * rn + gn - 1.5 * bn
 
-        # 3. Calculate ratio of standard deviations to find the scaling factor (alpha)
-        # We add a tiny epsilon to prevent division by zero
         alpha = np.std(x) / (np.std(y) + 1e-8)
-
-        # 4. Extract final pulse signal
         pulse_signal = x - alpha * y
         return pulse_signal
 
     def calculate_snr_and_bpm(self, pulse_signal):
-        """Filters the pulse signal and calculates the frequency-domain SNR."""
-        # Filter the raw pulse signal
         b, a = self._design_bandpass_filter()
         filtered_pulse = filtfilt(b, a, pulse_signal)
 
-        # Use Welch's method to compute the Power Spectral Density (PSD)
-        freqs, psd = welch(filtered_pulse, fs=self.fps, nperseg=len(filtered_pulse))
+        # FIX 3: Use nperseg as a fraction of signal length for better freq resolution
+        nperseg = min(len(filtered_pulse), self.fps * 4)
+        freqs, psd = welch(filtered_pulse, fs=self.fps, nperseg=nperseg,
+                           noverlap=nperseg // 2)
 
-        # Restrict to physiological heart rate range (0.7 Hz - 4.0 Hz)
-        valid_indices = np.where((freqs >= 0.7) & (freqs <= 4.0))[0]
-        valid_freqs = freqs[valid_indices]
-        valid_psd = psd[valid_indices]
+        valid_idx = np.where((freqs >= 0.7) & (freqs <= 4.0))[0]
+        valid_freqs = freqs[valid_idx]
+        valid_psd = psd[valid_idx]
 
         if len(valid_psd) == 0:
             return 0.0, 0.0
 
-        # Find the dominant frequency (Peak of the pulse)
         max_idx = np.argmax(valid_psd)
         dominant_freq = valid_freqs[max_idx]
         bpm = dominant_freq * 60.0
 
-        # Calculate SNR: Power of the peak vs Power of the rest of the spectrum
+        # SNR: peak bin power vs average noise floor (excluding ±2 bins around peak)
         peak_power = valid_psd[max_idx]
-        total_power = np.sum(valid_psd)
-        noise_power = total_power - peak_power
+        mask_bins = np.ones(len(valid_psd), dtype=bool)
+        lo = max(0, max_idx - 2)
+        hi = min(len(valid_psd), max_idx + 3)
+        mask_bins[lo:hi] = False
+        noise_power = np.mean(valid_psd[mask_bins]) if mask_bins.any() else 1e-8
 
         snr = peak_power / (noise_power + 1e-8)
-        # Convert to Decibels
         snr_db = 10 * np.log10(snr) if snr > 0 else 0
 
         return bpm, snr_db
 
     def process_frame(self, frame):
-        """
-        Main entry point for the orchestrator.
-        Returns the current BPM, SNR, Liveness Decision, and annotated frame.
-        """
         mean_r, mean_g, mean_b, processed_frame = self.extract_spatial_means(frame)
 
         bpm, snr = 0.0, 0.0
@@ -141,18 +132,15 @@ class AdvancedrPPGDetector:
             self.g_buffer.append(mean_g)
             self.b_buffer.append(mean_b)
 
-            # Maintain sliding window
             if len(self.r_buffer) > self.buffer_size:
                 self.r_buffer.pop(0)
                 self.g_buffer.pop(0)
                 self.b_buffer.pop(0)
 
-            # Process once buffer has enough data (e.g., at least 3 seconds)
-            if len(self.r_buffer) >= (self.fps * 3):
+            if len(self.r_buffer) >= (self.fps * 5):  # need at least 5s
                 pulse_signal = self.apply_chrom()
                 bpm, snr = self.calculate_snr_and_bpm(pulse_signal)
 
-                # The Liveness Gate Logic
                 if snr >= self.snr_threshold and 45 <= bpm <= 150:
                     passed = True
 
@@ -164,14 +152,18 @@ class AdvancedrPPGDetector:
         }, processed_frame
 
 
-# Quick local test block for Apple Silicon
 if __name__ == "__main__":
     detector = AdvancedrPPGDetector(fps=30)
     cap = cv2.VideoCapture(0)
 
+    # FIX 4: Lock exposure on MacBook to prevent auto-exposure drift
+    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)  # 1 = manual on macOS
+    cap.set(cv2.CAP_PROP_EXPOSURE, -6)      # try -5 to -7
+
     while cap.isOpened():
         ret, frame = cap.read()
-        if not ret: break
+        if not ret:
+            break
 
         result, display_frame = detector.process_frame(frame)
 
@@ -185,12 +177,14 @@ if __name__ == "__main__":
             status = f"LIVENESS: FAILED | SNR: {result['snr_db']:.1f}dB"
             color = (0, 0, 255)
 
-        cv2.putText(display_frame, status, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
-        cv2.putText(display_frame, f"Pulse: {result['bpm']:.1f} BPM", (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
-                    (255, 255, 255), 2)
+        cv2.putText(display_frame, status, (10, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+        cv2.putText(display_frame, f"Pulse: {result['bpm']:.1f} BPM", (10, 80),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
         cv2.imshow('Advanced rPPG (CHROM)', display_frame)
-        if cv2.waitKey(1) & 0xFF == ord('q'): break
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
 
     cap.release()
     cv2.destroyAllWindows()

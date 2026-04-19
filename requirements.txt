@@ -8,4 +8,4 @@ scipy
 mediapipe
 timm
 kaggle
-sklearn
+scikit-learn
