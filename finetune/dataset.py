@@ -24,7 +24,7 @@ class DeepfakeVideoDataset(Dataset):
                     self.file_paths.append(os.path.join(real_dir, f))
                     self.labels.append(0.0)
 
-        # Apply spatial augmentations to raw pixels, THEN normalize
+        # FIX: Apply spatial augmentations to raw pixels, THEN normalize
         self.train_transforms = v2.Compose([
             v2.RandomHorizontalFlip(p=0.5),
             v2.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1),
@@ -44,7 +44,8 @@ class DeepfakeVideoDataset(Dataset):
         file_path = self.file_paths[idx]
         label = self.labels[idx]
 
-        tensor_data = torch.load(file_path, weights_only=False)
+        # Security Fix
+        tensor_data = torch.load(file_path, weights_only=True)
         num_sequences = tensor_data.shape[0]
         seq_idx = torch.randint(0, num_sequences, (1,)).item() if self.is_training else 0
         sequence = tensor_data[seq_idx]

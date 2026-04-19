@@ -17,7 +17,9 @@ def train_model():
 
     model = FTCABlock(embed_dim=512, num_heads=8)
     if os.path.exists('best_ftca_pad_model.pth'):
-        model.load_state_dict(torch.load('best_ftca_pad_model.pth', map_location=device), strict=False)
+        # Security Fix
+        model.load_state_dict(torch.load('best_ftca_pad_model.pth', map_location=device, weights_only=True),
+                              strict=False)
         print("-> Successfully loaded previous weights for fine-tuning.")
 
     model = model.to(device)
@@ -53,7 +55,7 @@ def train_model():
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2)
     scaler = torch.amp.GradScaler('cuda')
 
-    epochs = 20
+    epochs = 15
     best_val_loss = float('inf')
 
     for epoch in range(epochs):

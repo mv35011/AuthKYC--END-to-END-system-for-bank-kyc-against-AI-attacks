@@ -29,7 +29,7 @@ class FrequencyEncoder(nn.Module):
             nn.BatchNorm3d(512),
             nn.ReLU(inplace=True)
         )
-        # Added to reach the final T/8 sequence length
+        # Added to reach the final T/8 sequence length to perfectly match RGB branch
         self.layer4 = nn.Sequential(
             nn.Conv3d(512, 512, kernel_size=3, stride=(2, 1, 1), padding=1),
             nn.BatchNorm3d(512),

@@ -7,26 +7,27 @@ from facenet_pytorch import MTCNN
 from torchvision.transforms import v2 as T
 
 
-def save_augmented_variants(source_path, target_dir, target_count):
-    """Creates diverse variants of a tensor to reach physical balance."""
+def save_augmented_variants(source_path, target_dir, start_idx, target_count):
+    """Creates diverse variants using a fast integer counter instead of disk globbing."""
     augment = T.Compose([
         T.RandomHorizontalFlip(p=0.5),
         T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.2, hue=0.05),
         T.RandomApply([T.GaussianBlur(kernel_size=3)], p=0.4),
     ])
 
-    base_tensor = torch.load(source_path, weights_only=False)  # [N, T, C, H, W]
-    existing = len(glob.glob(f"{target_dir}/custom_*.pt"))
-    copy_idx = existing
+    base_tensor = torch.load(source_path, weights_only=True)  # Security Fix
 
-    while len(glob.glob(f"{target_dir}/custom_*.pt")) < target_count:
+    current_idx = start_idx
+    while current_idx < target_count:
         aug_sequences = []
         for seq in base_tensor:
             aug_sequences.append(augment(seq))
 
-        dst = os.path.join(target_dir, f"custom_aug_{copy_idx}.pt")
+        dst = os.path.join(target_dir, f"custom_aug_{current_idx}.pt")
         torch.save(torch.stack(aug_sequences), dst)
-        copy_idx += 1
+        current_idx += 1
+
+    return current_idx
 
 
 class DeepfakeDataExtractor:
@@ -38,7 +39,7 @@ class DeepfakeDataExtractor:
         self.mtcnn = MTCNN(image_size=self.image_size, margin=40, keep_all=False, post_process=False,
                            device=self.device)
 
-        # FIX: We only convert to float (0.0 to 1.0). Normalization happens in dataset.py
+        # FIX: Convert to float (0.0 to 1.0) only. Normalization happens later.
         self.transform = T.Compose([T.ConvertImageDtype(torch.float32)])
 
     def extract_frames(self, video_path):
@@ -105,13 +106,16 @@ if __name__ == "__main__":
             extracted_custom_files.append(os.path.join(train_real_dir, f"custom_{video_name}.pt"))
 
     target_custom = 250
-    current = len(extracted_custom_files)
-    if 0 < current < target_custom:
+    current_count = len(extracted_custom_files)
+
+    if 0 < current_count < target_custom:
         print(f"Generating diverse variants to reach {target_custom}...")
-        idx = 0
-        while len(glob.glob(f"{train_real_dir}/custom_*.pt")) < target_custom:
-            save_augmented_variants(extracted_custom_files[idx % current], train_real_dir, target_custom)
-            idx += 1
+        source_idx = 0
+        while current_count < target_custom:
+            source_file = extracted_custom_files[source_idx % len(extracted_custom_files)]
+            batch_target = min(current_count + 10, target_custom)
+            current_count = save_augmented_variants(source_file, train_real_dir, current_count, batch_target)
+            source_idx += 1
 
     # 2. FF++ Real (Cap 250)
     real_paths = glob.glob('/workspace/ff-c23/FaceForensics++_C23/original/*.mp4')
