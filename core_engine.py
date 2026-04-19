@@ -133,19 +133,11 @@ class KYCOrchestrator:
                 logits = self.ftca_module(video_tensor)
                 ai_score = torch.sigmoid(logits).item()
 
-        # --- FINAL DECISION WITH BIOLOGICAL VOUCHING ---
-        # Base threshold for AI manipulation detection
-        base_threshold = 0.65
-
-        # If S1 (PRNU) confirms a real physical sensor AND S3 (rPPG) confirms a
-        # real heartbeat, we have strong independent physical evidence of a live human.
-        # In this case, we raise the FTCA threshold to 0.85 — the model needs to be
-        # very confident it's a deepfake to override two independent physical proofs.
-        # This compensates for the partially-trained frequency encoder (layer4 random init).
-        is_biologically_vouched = is_physical and is_lively and not is_replay
-        dynamic_threshold = 0.85 if is_biologically_vouched else base_threshold
-
-        is_deepfake = bool(ai_score > dynamic_threshold)
+        # --- FINAL DECISION ---
+        # Hard 0.50 threshold (sigmoid midpoint). Vouching was removed because
+        # FF++ deepfakes also pass PRNU + rPPG (made from real camera footage),
+        # so raising the threshold for "vouched" videos let deepfakes escape too.
+        is_deepfake = bool(ai_score > 0.50)
 
         return {
             "prnu_energy": float(prnu_energy),
