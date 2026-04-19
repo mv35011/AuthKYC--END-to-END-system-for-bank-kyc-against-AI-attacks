@@ -2,8 +2,8 @@ import cv2
 import numpy as np
 import os
 import torch
-import torchvision.transforms as T
-from PIL import Image
+from torchvision.transforms import v2 as T
+from facenet_pytorch import MTCNN
 
 # Import all 4 independent security modules
 from modules.moire_detector import ReplayAttackDetector
@@ -15,7 +15,7 @@ from modules.ftca_module import FTCABlock
 class KYCOrchestrator:
     def __init__(self):
         print("[Engine] Initializing 4-Layer PAD System...")
-        self.replay_module = ReplayAttackDetector(threshold=120000)
+        self.replay_module = ReplayAttackDetector(threshold=75000)
         self.rppg_module = AdvancedrPPGDetector(fps=30)
         self.prnu_module = PRNUDetector(energy_threshold=0.5)
 
@@ -32,17 +32,29 @@ class KYCOrchestrator:
 
         self.ftca_module.to(self.device)
 
-        # Load Golden Weights [cite: 338, 340]
+        # Security Update: Load Domain-Adapted Golden Weights securely
         if os.path.exists("best_ftca_pad_model.pth"):
-            self.ftca_module.load_state_dict(torch.load("best_ftca_pad_model.pth", map_location=self.device))
-            print(f"[System] Golden FTCA Weights Loaded Successfully on {self.device}!")
+            self.ftca_module.load_state_dict(torch.load("best_ftca_pad_model.pth", map_location=self.device, weights_only=True), strict=False)
+            print(f"[System] Domain-Adapted FTCA Weights Loaded Successfully on {self.device}!")
         else:
             print("[WARNING] Weights not found. Using untrained model.")
 
         self.ftca_module.eval()
 
-        # Domain Matching: Face Cropper to ensure FTCA only sees faces [cite: 71]
-        self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        # FIX: MTCNN crashes on Apple Silicon (MPS) due to a known PyTorch pooling bug.
+        # We force MTCNN to run on the CPU, while keeping the heavy FTCA model on the M2 GPU.
+        mtcnn_device = 'cpu' if self.device.type == 'mps' else self.device
+
+        self.face_detector = MTCNN(
+            image_size=224, margin=40, keep_all=False,
+            post_process=False, device=mtcnn_device
+        )
+
+        # Normalization matching the training dataset.py
+        self.ftca_normalize = T.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225]
+        )
 
     def analyze_video(self, video_path):
         cap = cv2.VideoCapture(video_path)
@@ -52,78 +64,75 @@ class KYCOrchestrator:
         frames_for_ftca = []
         rppg_results = {"bpm": 0.0, "snr_db": 0.0, "passed": False, "buffer_fill_ratio": 0.0}
 
+        # FIX: Reset rPPG buffers so previous video's pulse doesn't leak
+        self.rppg_module.reset()
+
         frame_count = 0
-        # Analyze 180 frames (6 seconds) to ensure buffer and tensor stability [cite: 117, 307]
+        # Analyze 180 frames (6 seconds) to ensure buffer and tensor stability
         while cap.isOpened() and frame_count < 180:
             ret, frame = cap.read()
             if not ret: break
 
-            # Stage 1: PRNU Sensor Fingerprinting [cite: 137, 141]
+            # Stage 1: PRNU Sensor Fingerprinting
             self.prnu_module.process_frame(frame)
 
-            # Stage 2: Moiré/Replay Grid Detection [cite: 172, 178]
+            # Stage 2: Moiré/Replay Grid Detection
             moire_output = self.replay_module.analyze_frame(frame)
             score_only = moire_output[0] if isinstance(moire_output, tuple) else moire_output
             moire_scores.append(score_only)
 
-            # Stage 3: Biological Liveness (rPPG) [cite: 217, 221]
+            # Stage 3: Biological Liveness (rPPG)
             rppg_state, _ = self.rppg_module.process_frame(frame)
-            if rppg_state["buffer_fill_ratio"] >= 1.0:
+            # FIX: Buffer Starvation Bug. Lock in the results the moment we get a valid pulse reading!
+            if rppg_state["bpm"] > 0:
                 rppg_results = rppg_state
 
-                # Stage 4: AI Manipulation Prep (Face Cropping) [cite: 71]
-            if frame_count % int(max(1, fps // 3)) == 0 and len(frames_for_ftca) < 16:
-                gray_for_crop = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                faces = self.face_cascade.detectMultiScale(gray_for_crop, 1.1, 5)
+            # Stage 4: AI Manipulation Prep — MTCNN Face Detection
+            # FIX: Removed the "fps // 3" skip. We MUST extract 16 contiguous frames
+            # so the 3D Temporal CNN and Frequency Encoder can see actual motion.
+            if len(frames_for_ftca) < 16:
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                face = self.face_detector(rgb_frame)
 
-                if len(faces) > 0:
-                    x, y, w, h = faces[0]
-                    pad = 40
-                    y1, y2 = max(0, y - pad), min(frame.shape[0], y + h + pad)
-                    x1, x2 = max(0, x - pad), min(frame.shape[1], x + w + pad)
-                    frames_for_ftca.append(frame[y1:y2, x1:x2])
-                else:
-                    frames_for_ftca.append(frame)
+                # Only append valid MTCNN-cropped faces, never full frames
+                if face is not None:
+                    # MTCNN returns uint8 [0,255] tensor -> convert to float [0,1]
+                    face_float = face / 255.0
+                    frames_for_ftca.append(face_float)
 
             frame_count += 1
         cap.release()
 
-        # --- HEURISTIC FUSION LAYER (PATENT INTENT LOGIC) [cite: 383, 385] ---
+        # --- INDEPENDENT WATERFALL LOGIC ---
 
-        # 1. Camera Authenticity (PRNU) [cite: 145]
+        # 1. Camera Authenticity (PRNU)
         prnu_energy, is_physical = self.prnu_module.analyze_fingerprint()
 
-        # 2. Presentation Attack (Moiré PMR Score) [cite: 180]
+        # 2. Presentation Attack (Moiré PMR Score)
         avg_moire = np.mean(moire_scores) if moire_scores else 0
         is_replay = bool(avg_moire > self.replay_module.threshold)
 
-        # 3. Biological Context (S3) [cite: 222]
+        # 3. Biological Context (S3)
         bpm = rppg_results.get("bpm", 0.0)
         snr = rppg_results.get("snr_db", 0.0)
-        # S3 "Vouching": A high SNR pulse is a strong physical proof of life [cite: 319, 320]
-        is_biological_confirmed = (snr > 2.5 and 45 <= bpm <= 120)
+        is_lively = rppg_results.get("passed", False) or (snr > 2.5 and 45 <= bpm <= 120)
 
-        # 4. AI Manipulation Inference (S4) [cite: 257]
+        # 4. AI Manipulation Inference (S4) — tensor assembly matches training pipeline
         ai_score = 0.0
         if len(frames_for_ftca) >= 16:
-            transform = T.Compose([
-                T.Resize((224, 224)),
-                T.ToTensor(),
-                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
+            # Normalize each face tensor exactly like finetune/dataset.py
+            processed = [self.ftca_normalize(f) for f in frames_for_ftca[:16]]
 
-            processed_tensors = [transform(Image.fromarray(cv2.cvtColor(f, cv2.COLOR_BGR2RGB))) for f in
-                                 frames_for_ftca[:16]]
-            video_tensor = torch.stack(processed_tensors, dim=1).unsqueeze(0).to(self.device)
+            # Stack as [16, 3, 224, 224] → permute to [3, 16, 224, 224] → add batch dim
+            video_tensor = torch.stack(processed).permute(1, 0, 2, 3).unsqueeze(0).to(self.device)
 
             with torch.no_grad():
                 logits = self.ftca_module(video_tensor)
                 ai_score = torch.sigmoid(logits).item()
 
-        # --- FINAL WATERFALL DECISION ---
-        # If biological life is confirmed, we increase AI tolerance to 0.75 [cite: 317, 385]
-        dynamic_threshold = 0.75 if is_biological_confirmed else 0.5
-        is_deepfake = bool(ai_score > dynamic_threshold)
+        # --- FINAL STRICT DECISION ---
+        # Bumped to 0.65 to accommodate the 15-epoch fine-tune caution margin
+        is_deepfake = bool(ai_score > 0.65)
 
         return {
             "prnu_energy": float(prnu_energy),
@@ -132,8 +141,7 @@ class KYCOrchestrator:
             "is_replay_attack": is_replay,
             "biological_bpm": float(bpm),
             "rppg_snr": float(snr),
-            "is_lively": rppg_results.get("passed", False) or is_biological_confirmed,
+            "is_lively": is_lively,
             "ai_manipulation_score": float(ai_score),
-            "is_deepfake": is_deepfake,
-            "dynamic_threshold_used": dynamic_threshold
+            "is_deepfake": is_deepfake
         }

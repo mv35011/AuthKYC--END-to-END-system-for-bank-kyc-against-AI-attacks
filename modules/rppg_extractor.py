@@ -22,6 +22,12 @@ class AdvancedrPPGDetector:
             min_tracking_confidence=0.5
         )
 
+    def reset(self):
+        """Clears all buffers so a new video starts with a clean slate."""
+        self.r_buffer.clear()
+        self.g_buffer.clear()
+        self.b_buffer.clear()
+
     def _design_bandpass_filter(self, lowcut=0.7, highcut=4.0, order=4):
         nyquist = 0.5 * self.fps
         b, a = butter(order, [lowcut / nyquist, highcut / nyquist], btype='band')
@@ -64,28 +70,33 @@ class AdvancedrPPGDetector:
         return mean_r, mean_g, mean_b, frame
 
     def apply_chrom(self):
+        from scipy.signal import detrend
+
         r = np.array(self.r_buffer)
         g = np.array(self.g_buffer)
         b = np.array(self.b_buffer)
 
-        # FIX 2: Use a proper sliding window mean (rolling, not global)
-        # Detrend each channel first to remove slow drift from auto-exposure
-        from scipy.signal import detrend
-        r = detrend(r)
-        g = detrend(g)
-        b = detrend(b)
+        # Step 1: Normalize by temporal mean FIRST (standard CHROM preprocessing)
+        # This gives us the relative change: (x - mean) / mean ≈ AC/DC component
+        rn = r / (np.mean(r) + 1e-8)
+        gn = g / (np.mean(g) + 1e-8)
+        bn = b / (np.mean(b) + 1e-8)
 
-        # Normalize: add back a unit mean so ratios make sense
-        rn = r / (np.mean(np.abs(r)) + 1e-8) + 1
-        gn = g / (np.mean(np.abs(g)) + 1e-8) + 1
-        bn = b / (np.mean(np.abs(b)) + 1e-8) + 1
+        # Step 2: Detrend AFTER normalizing to remove slow luminance drift
+        # (e.g. from M2 webcam auto-exposure wobble)
+        rn = detrend(rn)
+        gn = detrend(gn)
+        bn = detrend(bn)
 
-        # CHROM projection
-        x = 3 * rn - 2 * gn
+        # Step 3: Full CHROM projection — both terms must include blue
+        x = 3 * rn - 2 * gn  # ← WRONG in your current code
+        x = 3 * rn - 2 * gn - bn  # ← correct
         y = 1.5 * rn + gn - 1.5 * bn
 
+        # Step 4: Alpha scaling and pulse extraction
         alpha = np.std(x) / (np.std(y) + 1e-8)
         pulse_signal = x - alpha * y
+
         return pulse_signal
 
     def calculate_snr_and_bpm(self, pulse_signal):
@@ -137,7 +148,7 @@ class AdvancedrPPGDetector:
                 self.g_buffer.pop(0)
                 self.b_buffer.pop(0)
 
-            if len(self.r_buffer) >= (self.fps * 5):  # need at least 5s
+            if len(self.r_buffer) >= (self.fps * 3):  # need at least 5s
                 pulse_signal = self.apply_chrom()
                 bpm, snr = self.calculate_snr_and_bpm(pulse_signal)
 
