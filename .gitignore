@@ -3,3 +3,4 @@
 datasets/
 videos/
 models/
+best_ftca_pad_model.pth
