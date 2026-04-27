@@ -1,0 +1,19 @@
+# ═══════════════════════════════════════════════
+# AuthKYC — Docker Compose
+# Single command: docker-compose up --build
+# Open browser at http://localhost:8000
+# ═══════════════════════════════════════════════
+
+services:
+  authkyc:
+    build: .
+    container_name: authkyc-pad
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount model weights from host (so you don't need to rebuild to swap weights)
+      - ./best_ftca_pad_model.pth:/app/best_ftca_pad_model.pth:ro
+      - ./patent_ftca_v2.pth:/app/patent_ftca_v2.pth:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped

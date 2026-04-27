@@ -22,11 +22,11 @@ class KYCOrchestrator:
         # Initialize FTCA Spatio-Temporal Model
         self.ftca_module = FTCABlock()
 
-        # Hardware Acceleration: Use MPS (Apple Silicon), CUDA, or CPU
-        if torch.backends.mps.is_available():
-            self.device = torch.device("mps")
-        elif torch.cuda.is_available():
+        # Hardware Acceleration: CUDA (RunPod/Docker) > MPS (Apple Silicon) > CPU
+        if torch.cuda.is_available():
             self.device = torch.device("cuda")
+        elif torch.backends.mps.is_available():
+            self.device = torch.device("mps")
         else:
             self.device = torch.device("cpu")
 

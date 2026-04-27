@@ -1,11 +1,13 @@
 torch
 torchvision
-opencv-python
+opencv-python-headless
 facenet-pytorch
 fastapi
+uvicorn[standard]
+python-multipart
 pydantic
 scipy
 mediapipe
 timm
-kaggle
 scikit-learn
+numpy

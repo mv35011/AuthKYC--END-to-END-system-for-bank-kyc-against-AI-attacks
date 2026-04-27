@@ -1,5 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import shutil
 import os
@@ -51,6 +53,24 @@ def analyze_stream_telemetry(video_path):
     if expected_fps.is_integer():
         return "NOTICE: Rigid Frame Timing (Monitor for OBS)"
     return "OK: Natural Stream Variance"
+
+
+# ── Frontend ──
+@app.get("/")
+async def serve_frontend():
+    return FileResponse("frontend/index.html")
+
+app.mount("/frontend", StaticFiles(directory="frontend"), name="frontend")
+
+
+# ── Rewrite static asset paths (styles.css, app.js) ──
+@app.get("/styles.css")
+async def serve_css():
+    return FileResponse("frontend/styles.css")
+
+@app.get("/app.js")
+async def serve_js():
+    return FileResponse("frontend/app.js")
 
 
 @app.post("/api/v1/audit_stream", response_model=KYCResponse)

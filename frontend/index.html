@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AuthKYC — Presentation Attack Detection</title>
+  <meta name="description" content="4-Layer Biometric PAD System for Banking KYC">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- ═══════════════ HEADER ═══════════════ -->
+  <header class="header">
+    <div class="header-brand">
+      <div class="logo-icon">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+      </div>
+      <div>
+        <h1 class="logo-text">AuthKYC</h1>
+        <p class="logo-sub">4-Layer Presentation Attack Detection</p>
+      </div>
+    </div>
+    <div class="header-meta">
+      <span class="badge badge-outline" id="deviceBadge">CPU</span>
+      <span class="badge badge-primary">v2.0</span>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- ═══════════════ UPLOAD SECTION ═══════════════ -->
+    <section class="upload-section" id="uploadSection">
+      <div class="upload-zone" id="uploadZone">
+        <div class="upload-icon">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+        </div>
+        <h2 class="upload-title">Upload Video for KYC Audit</h2>
+        <p class="upload-hint">Drag & drop or click to select — .mp4, .avi, .mov, .webm</p>
+        <input type="file" id="fileInput" accept=".mp4,.avi,.mov,.webm" hidden>
+        <button class="btn btn-primary" id="browseBtn">Browse Files</button>
+      </div>
+      <div class="file-info" id="fileInfo" style="display:none">
+        <div class="file-details">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <span id="fileName"></span>
+          <span class="file-size" id="fileSize"></span>
+        </div>
+        <button class="btn btn-accent" id="analyzeBtn">Run PAD Analysis</button>
+      </div>
+    </section>
+
+    <!-- ═══════════════ PROCESSING ═══════════════ -->
+    <section class="processing-section" id="processingSection" style="display:none">
+      <div class="spinner"></div>
+      <h3 class="processing-title">Running 4-Layer Security Waterfall</h3>
+      <p class="processing-sub" id="processingStatus">Initializing PRNU forensics...</p>
+      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+    </section>
+
+    <!-- ═══════════════ RESULTS DASHBOARD ═══════════════ -->
+    <section class="results-section" id="resultsSection" style="display:none">
+
+      <!-- Final Verdict -->
+      <div class="verdict-card" id="verdictCard">
+        <div class="verdict-icon" id="verdictIcon"></div>
+        <div>
+          <h2 class="verdict-title" id="verdictTitle"></h2>
+          <p class="verdict-detail" id="verdictDetail"></p>
+        </div>
+        <div class="verdict-time" id="verdictTime"></div>
+      </div>
+
+      <!-- Telemetry -->
+      <div class="telemetry-bar" id="telemetryBar">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <span id="telemetryText"></span>
+      </div>
+
+      <!-- Stage Cards -->
+      <div class="stages-grid">
+        <!-- S1 -->
+        <div class="stage-card" id="stage1Card">
+          <div class="stage-header">
+            <span class="stage-number">S1</span>
+            <span class="stage-name">PRNU Sensor Forensics</span>
+            <span class="stage-badge" id="s1Badge"></span>
+          </div>
+          <div class="stage-body">
+            <div class="stage-metric">
+              <span class="metric-label">Energy Score</span>
+              <span class="metric-value mono" id="s1Score"></span>
+            </div>
+            <div class="stage-bar-container">
+              <div class="stage-bar" id="s1Bar"></div>
+            </div>
+            <p class="stage-detail" id="s1Detail"></p>
+            <div class="stage-params">
+              <span>Threshold: <code>0.5</code></span>
+              <span>Kernel: <code>3×3 median</code></span>
+              <span>Frames: <code>~180</code></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- S2 -->
+        <div class="stage-card" id="stage2Card">
+          <div class="stage-header">
+            <span class="stage-number">S2</span>
+            <span class="stage-name">Moiré Replay Detection</span>
+            <span class="stage-badge" id="s2Badge"></span>
+          </div>
+          <div class="stage-body">
+            <div class="stage-metric">
+              <span class="metric-label">Frequency Score</span>
+              <span class="metric-value mono" id="s2Score"></span>
+            </div>
+            <div class="stage-bar-container">
+              <div class="stage-bar" id="s2Bar"></div>
+            </div>
+            <p class="stage-detail" id="s2Detail"></p>
+            <div class="stage-params">
+              <span>Threshold: <code>1500</code></span>
+              <span>FFT: <code>2D</code></span>
+              <span>Mask: <code>15% center</code></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- S3 -->
+        <div class="stage-card" id="stage3Card">
+          <div class="stage-header">
+            <span class="stage-number">S3</span>
+            <span class="stage-name">rPPG Biological Liveness</span>
+            <span class="stage-badge" id="s3Badge"></span>
+          </div>
+          <div class="stage-body">
+            <div class="stage-metric">
+              <span class="metric-label">SNR (dB)</span>
+              <span class="metric-value mono" id="s3Score"></span>
+            </div>
+            <div class="stage-metric">
+              <span class="metric-label">Pulse</span>
+              <span class="metric-value mono" id="s3Bpm"></span>
+            </div>
+            <div class="stage-bar-container">
+              <div class="stage-bar" id="s3Bar"></div>
+            </div>
+            <p class="stage-detail" id="s3Detail"></p>
+            <div class="stage-params">
+              <span>Algorithm: <code>CHROM</code></span>
+              <span>Band: <code>0.7–4.0 Hz</code></span>
+              <span>SNR ≥ <code>1.5 dB</code></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- S4 -->
+        <div class="stage-card" id="stage4Card">
+          <div class="stage-header">
+            <span class="stage-number">S4</span>
+            <span class="stage-name">FTCA Spatio-Temporal AI</span>
+            <span class="stage-badge" id="s4Badge"></span>
+          </div>
+          <div class="stage-body">
+            <div class="stage-metric">
+              <span class="metric-label">AI Score</span>
+              <span class="metric-value mono" id="s4Score"></span>
+            </div>
+            <div class="stage-bar-container">
+              <div class="stage-bar" id="s4Bar"></div>
+            </div>
+            <p class="stage-detail" id="s4Detail"></p>
+            <div class="stage-params">
+              <span>Backbone: <code>R3D-18</code></span>
+              <span>Fusion: <code>CrossAttn×8</code></span>
+              <span>Threshold: <code>0.50</code></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Raw JSON -->
+      <details class="raw-json">
+        <summary>Raw API Response</summary>
+        <pre id="rawJson"></pre>
+      </details>
+
+      <!-- Reset -->
+      <button class="btn btn-outline" id="resetBtn">Analyze Another Video</button>
+    </section>
+  </main>
+
+  <!-- ═══════════════ FOOTER ═══════════════ -->
+  <footer class="footer">
+    <p>AuthKYC — NIT Patna ECE Department · Manmohan Vishwakarma · Ankur Raj</p>
+    <div class="footer-links">
+      <a href="https://github.com/mv35011/AuthKYC--END-to-END-system-for-bank-kyc-against-AI-attacks" target="_blank">GitHub</a>
+      <a href="https://drive.google.com/drive/folders/1ewJDwSbeyMI3JFJkYBhZD_NDlN92H-8w?usp=sharing" target="_blank">Artifacts</a>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
